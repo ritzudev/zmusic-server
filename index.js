@@ -9,16 +9,45 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Función para auto-corregir el formato de cookies Netscape (convierte espacios a tabuladores si es necesario)
+function formatNetscapeCookies(rawCookies) {
+  if (!rawCookies) return '';
+  const lines = rawCookies.split(/\r?\n/);
+  const formattedLines = lines.map(line => {
+    if (line.trim().startsWith('#') || line.trim() === '') {
+      return line;
+    }
+    if (line.includes('\t')) {
+      return line;
+    }
+    const parts = line.trim().split(/\s+/);
+    if (parts.length >= 7) {
+      const domain = parts[0];
+      const flag = parts[1];
+      const path = parts[2];
+      const secure = parts[3];
+      const expiration = parts[4];
+      const name = parts[5];
+      const value = parts.slice(6).join(' ');
+      return `${domain}\t${flag}\t${path}\t${secure}\t${expiration}\t${name}\t${value}`;
+    }
+    return line;
+  });
+  return formattedLines.join('\n');
+}
+
 // Escribir las cookies de YouTube si están definidas en las variables de entorno
 const cookiesPath = path.join(__dirname, 'cookies.txt');
 if (process.env.YOUTUBE_COOKIES) {
   try {
-    fs.writeFileSync(cookiesPath, process.env.YOUTUBE_COOKIES, 'utf8');
-    console.log('✅ Cookies de YouTube cargadas exitosamente desde las variables de entorno.');
+    const formattedCookies = formatNetscapeCookies(process.env.YOUTUBE_COOKIES);
+    fs.writeFileSync(cookiesPath, formattedCookies, 'utf8');
+    console.log('✅ Cookies de YouTube cargadas y auto-formateadas exitosamente desde las variables de entorno.');
   } catch (e) {
     console.error('❌ Error al guardar las cookies de YouTube:', e);
   }
 }
+
 
 
 // Middleware
@@ -284,6 +313,11 @@ app.get('/stream', (req, res) => {
 
   execFile(ytDlp, args, { timeout: 20000 }, async (error, stdout, stderr) => {
     if (error) {
+      console.error(`❌ [yt-dlp Failure Details - /stream]`);
+      console.error(`Exit Code: ${error.code}`);
+      console.error(`stdout: ${stdout.trim()}`);
+      console.error(`stderr: ${stderr.trim()}`);
+      
       console.warn(`⚠️ [yt-dlp] Falló la extracción directa en el servidor. Intentando fallback automático a proxies alternativos...`);
       try {
         const alternativeData = await getAlternativeStream(videoUrl);
@@ -360,6 +394,11 @@ app.get('/info', (req, res) => {
 
   execFile(ytDlp, args, { maxBuffer: 10 * 1024 * 1024, timeout: 20000 }, async (error, stdout, stderr) => {
     if (error) {
+      console.error(`❌ [yt-dlp Failure Details - /info]`);
+      console.error(`Exit Code: ${error.code}`);
+      console.error(`stdout: ${stdout.trim()}`);
+      console.error(`stderr: ${stderr.trim()}`);
+      
       console.warn(`⚠️ [yt-dlp] Falló la extracción de metadatos. Intentando fallback automático a proxies alternativos...`);
       try {
         const alternativeData = await getAlternativeStream(videoUrl);
@@ -453,6 +492,11 @@ app.post('/', async (req, res) => {
 
   execFile(ytDlp, args, { timeout: 20000 }, async (error, stdout, stderr) => {
     if (error) {
+      console.error(`❌ [yt-dlp Failure Details - POST /]`);
+      console.error(`Exit Code: ${error.code}`);
+      console.error(`stdout: ${stdout.trim()}`);
+      console.error(`stderr: ${stderr.trim()}`);
+      
       console.warn(`[Cobalt Compat] yt-dlp falló. Intentando fallback a proxies...`);
       try {
         const alternativeData = await getAlternativeStream(videoUrl);
