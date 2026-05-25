@@ -284,77 +284,15 @@ app.get('/stream', (req, res) => {
     return res.status(400).json({ error: 'La URL proporcionada no es válida' });
   }
 
-  const ytDlp = getExecutablePath();
-  const isLinux = process.platform === 'linux';
-  const cookiesPath = path.join(__dirname, 'cookies.txt');
-  const hasCookies = fs.existsSync(cookiesPath);
+  console.log(`[Stream API] Solicitada URL directa para: ${videoUrl}`);
+
+  // Retornar al instante la URL del túnel de descarga sin ejecutar yt-dlp de forma redundante.
+  const downloadUrl = `${req.protocol}://${req.get('host')}/download?url=${encodeURIComponent(videoUrl)}`;
   
-  // Parámetros optimizados para evadir bloqueos de VPS/DataCenters
-  const args = [
-    '-g',
-    '-f', 'bestaudio[ext=m4a]/bestaudio/best',
-    '--js-runtimes', 'node',
-    '--force-ipv4',
-    '--socket-timeout', '30',
-    '--retries', '3',
-    '--no-playlist'
-  ];
-
-  // Si NO tenemos cookies, forzamos los clientes móviles para evadir los bloqueos básicos de bot.
-  // Si SÍ tenemos cookies, permitimos los clientes oficiales por defecto (web, tv, etc.) para que se aplique la sesión.
-  if (!hasCookies) {
-    args.push('--extractor-args', 'youtube:player_client=ios,android');
-  }
-
-  // Si estamos en producción (Linux/Render), usamos el proxy Tor local (el cual está limitado a nodos de salida en las Américas en torrc para proteger las cookies de bloqueos geográficos).
-  if (isLinux) {
-    args.push('--proxy', 'socks5://127.0.0.1:9050');
-  }
-
-  // Agregar cookies si existen
-  if (hasCookies) {
-    args.push('--cookies', cookiesPath);
-  }
-
-  args.push(videoUrl);
-
-  console.log(`Ejecutando: ${ytDlp} ${args.join(' ')}`);
-
-  execFile(ytDlp, args, { timeout: 60000 }, async (error, stdout, stderr) => {
-    if (error) {
-      console.error(`❌ [yt-dlp Failure Details - /stream]`);
-      console.error(`Exit Code: ${error.code}`);
-      console.error(`stdout: ${stdout.trim()}`);
-      console.error(`stderr: ${stderr.trim()}`);
-      
-      console.warn(`⚠️ [yt-dlp] Falló la extracción directa en el servidor. Intentando fallback automático a proxies alternativos...`);
-      try {
-        const alternativeData = await getAlternativeStream(videoUrl);
-        return res.json({
-          status: 'success',
-          url: alternativeData.streamUrl,
-          provider: alternativeData.provider
-        });
-      } catch (pipedError) {
-        console.error(`❌ [Fallback Proxies] También falló: ${pipedError.message}`);
-        return res.status(500).json({
-          error: 'No se pudo extraer el flujo de audio de YouTube (fallaron tanto yt-dlp como los proxies de Piped/Invidious).',
-          details: `Error yt-dlp: ${stderr.trim() || error.message} | Error Proxies: ${pipedError.message}`
-        });
-      }
-    }
-
-    const streamUrl = stdout.trim();
-    if (!streamUrl) {
-      return res.status(500).json({ error: 'yt-dlp no devolvió ninguna URL de flujo.' });
-    }
-
-    const downloadUrl = `${req.protocol}://${req.get('host')}/download?url=${encodeURIComponent(videoUrl)}`;
-    res.json({
-      status: 'success',
-      url: downloadUrl,
-      provider: 'yt-dlp'
-    });
+  res.json({
+    status: 'success',
+    url: downloadUrl,
+    provider: 'yt-dlp'
   });
 });
 
@@ -542,77 +480,13 @@ app.post('/', async (req, res) => {
 
   console.log(`[Cobalt Compat] Recibida solicitud POST para: ${videoUrl}`);
 
-  const ytDlp = getExecutablePath();
-  const isLinux = process.platform === 'linux';
-  const cookiesPath = path.join(__dirname, 'cookies.txt');
-  const hasCookies = fs.existsSync(cookiesPath);
+  // Retornar al instante la URL del túnel de descarga sin ejecutar yt-dlp de forma redundante.
+  // Esto reduce a la mitad el tiempo total de descarga del cliente (ahorrando ~35 segundos).
+  const downloadUrl = `${req.protocol}://${req.get('host')}/download?url=${encodeURIComponent(videoUrl)}`;
   
-  const args = [
-    '-g',
-    '-f', 'bestaudio[ext=m4a]/bestaudio/best',
-    '--js-runtimes', 'node',
-    '--force-ipv4',
-    '--socket-timeout', '30',
-    '--retries', '3',
-    '--no-playlist'
-  ];
-
-  // Si NO tenemos cookies, forzamos los clientes móviles para evadir los bloqueos básicos de bot.
-  // Si SÍ tenemos cookies, permitimos los clientes oficiales por defecto (web, tv, etc.) para que se aplique la sesión.
-  if (!hasCookies) {
-    args.push('--extractor-args', 'youtube:player_client=ios,android');
-  }
-
-  // Si estamos en producción (Linux/Render), usamos el proxy Tor local (limitado regionalmente en las Américas).
-  if (isLinux) {
-    args.push('--proxy', 'socks5://127.0.0.1:9050');
-  }
-
-  if (hasCookies) {
-    args.push('--cookies', cookiesPath);
-  }
-
-  args.push(videoUrl);
-
-  execFile(ytDlp, args, { timeout: 60000 }, async (error, stdout, stderr) => {
-    if (error) {
-      console.error(`❌ [yt-dlp Failure Details - POST /]`);
-      console.error(`Exit Code: ${error.code}`);
-      console.error(`stdout: ${stdout.trim()}`);
-      console.error(`stderr: ${stderr.trim()}`);
-      
-      console.warn(`[Cobalt Compat] yt-dlp falló. Intentando fallback a proxies...`);
-      try {
-        const alternativeData = await getAlternativeStream(videoUrl);
-        return res.json({
-          status: 'tunnel',
-          url: alternativeData.streamUrl
-        });
-      } catch (pipedError) {
-        console.error(`[Cobalt Compat Fallback] Falló también: ${pipedError.message}`);
-        return res.status(500).json({
-          status: 'error',
-          error: {
-            code: 'error.api.extraction_failed',
-            text: `Extracción fallida: ${pipedError.message}`
-          }
-        });
-      }
-    }
-
-    const streamUrl = stdout.trim();
-    if (!streamUrl) {
-      return res.status(500).json({
-        status: 'error',
-        error: { code: 'error.api.empty_stream', text: 'Flujo de stream vacío' }
-      });
-    }
-
-    const downloadUrl = `${req.protocol}://${req.get('host')}/download?url=${encodeURIComponent(videoUrl)}`;
-    res.json({
-      status: 'tunnel',
-      url: downloadUrl
-    });
+  res.json({
+    status: 'tunnel',
+    url: downloadUrl
   });
 });
 
