@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const net = require('net');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -208,12 +209,30 @@ async function getAlternativeStream(videoUrl) {
 }
 
 // Endpoint de Salud
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  const isTorRunning = await new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(1000);
+    socket.on('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => {
+      resolve(false);
+    });
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.connect(9050, '127.0.0.1');
+  });
+
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     platform: process.platform,
-    ytDlpPath: getExecutablePath()
+    ytDlpPath: getExecutablePath(),
+    isTorRunning: isTorRunning
   });
 });
 

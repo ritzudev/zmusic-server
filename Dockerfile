@@ -10,8 +10,10 @@ RUN apt-get update && apt-get install -y \
     tor \
     && rm -rf /var/lib/apt/lists/*
 
-# Configurar Tor para que escuche en el puerto 9050
-RUN echo "SocksPort 9050" >> /etc/tor/torrc
+# Configurar Tor para que escuche en el puerto 9050 y use un directorio temporal de datos para evitar errores de permisos
+RUN echo "SocksPort 9050" >> /etc/tor/torrc && \
+    echo "DataDirectory /tmp/tor-data" >> /etc/tor/torrc
+
 
 
 
