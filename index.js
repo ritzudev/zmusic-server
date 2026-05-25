@@ -44,6 +44,17 @@ function getExecutablePath() {
   return isWindows ? 'yt-dlp.exe' : 'yt-dlp';
 }
 
+const COBALT_INSTANCES = [
+  'https://cobalt.perennialte.ch',
+  'https://cobalt.potatofactory.uk',
+  'https://cobalt.colinbox.cc',
+  'https://cobalt.0x3.ch',
+  'https://cobalt.synced.cloud',
+  'https://api.cobalt.tools',
+  'https://cobalt.sh',
+  'https://cobalt.su'
+];
+
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.tokhmi.xyz',
@@ -75,13 +86,55 @@ async function getAlternativeStream(videoUrl) {
 
   let lastError = null;
 
-  // --- INTENTO 1: RED DE PIPED ---
+  // --- CAPA 1: RED DE COBALT ALTERNATIVO (LA MÁS FIABLE PARA DOWNLOAD/STREAM) ---
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      console.log(`Intentando Cobalt API en ${instance}...`);
+      const response = await fetch(instance, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+        },
+        body: JSON.stringify({
+          url: videoUrl,
+          downloadMode: 'audio',
+          audioFormat: 'best'
+        }),
+        signal: AbortSignal.timeout(8000)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === 'tunnel' || data.status === 'redirect') {
+          const streamUrl = data.url;
+          if (streamUrl) {
+            console.log(`✅ Éxito con Cobalt: ${instance}`);
+            return {
+              streamUrl: streamUrl,
+              title: 'Audio de YouTube',
+              artist: 'Artista de YouTube',
+              duration: 0,
+              thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+              provider: `cobalt_alt_${instance.replace('https://', '')}`
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`Cobalt ${instance} falló: ${e.message}`);
+      lastError = e;
+    }
+  }
+
+  // --- CAPA 2: RED DE PIPED ---
   for (const instance of PIPED_INSTANCES) {
     try {
       console.log(`Intentando Piped API en ${instance}...`);
       const response = await fetch(`${instance}/streams/${videoId}`, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(10000) // Timeout aumentado a 10s para conexiones lentas
+        signal: AbortSignal.timeout(8000)
       });
 
       if (response.ok) {
@@ -93,9 +146,9 @@ async function getAlternativeStream(videoUrl) {
           return {
             streamUrl: bestAudio.url,
             title: data.title || 'Audio de YouTube',
-            artist: data.uploader || 'Artista desconocido',
+            artist: data.uploader || 'Artista de YouTube',
             duration: data.duration || 0,
-            thumbnail: data.thumbnailUrl || '',
+            thumbnail: data.thumbnailUrl || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
             provider: 'piped_fallback'
           };
         }
@@ -106,13 +159,13 @@ async function getAlternativeStream(videoUrl) {
     }
   }
 
-  // --- INTENTO 2: RED DE INVIDIOUS (SEGUNDA CAPA) ---
+  // --- CAPA 3: RED DE INVIDIOUS ---
   for (const instance of INVIDIOUS_INSTANCES) {
     try {
       console.log(`Intentando Invidious API en ${instance}...`);
       const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(8000)
       });
 
       if (response.ok) {
@@ -126,7 +179,7 @@ async function getAlternativeStream(videoUrl) {
           
           console.log(`✅ Stream de audio extraído con éxito vía Invidious (${instance})`);
           
-          let thumbnail = '';
+          let thumbnail = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
           if (data.videoThumbnails && data.videoThumbnails.length > 0) {
             const highThumb = data.videoThumbnails.find(t => t.quality === 'high' || t.quality === 'medium');
             thumbnail = highThumb ? highThumb.url : data.videoThumbnails[0].url;
@@ -138,7 +191,7 @@ async function getAlternativeStream(videoUrl) {
           return {
             streamUrl: bestAudio.url,
             title: data.title || 'Audio de YouTube',
-            artist: data.author || 'Artista desconocido',
+            artist: data.author || 'Artista de YouTube',
             duration: data.lengthSeconds || 0,
             thumbnail: thumbnail,
             provider: 'invidious_fallback'
