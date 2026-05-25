@@ -232,15 +232,22 @@ app.get('/stream', (req, res) => {
 
   const ytDlp = getExecutablePath();
   const isLinux = process.platform === 'linux';
+  const cookiesPath = path.join(__dirname, 'cookies.txt');
+  const hasCookies = fs.existsSync(cookiesPath);
   
   // Parámetros optimizados para evadir bloqueos de VPS/DataCenters
   const args = [
     '-g',
     '-f', 'bestaudio[ext=m4a]/bestaudio/best',
-    '--extractor-args', 'youtube:player_client=ios,android',
     '--js-runtimes', 'node',
     '--force-ipv4'
   ];
+
+  // Si NO tenemos cookies, forzamos los clientes móviles para evadir los bloqueos básicos de bot.
+  // Si SÍ tenemos cookies, permitimos los clientes oficiales por defecto (web, tv, etc.) para que se aplique la sesión.
+  if (!hasCookies) {
+    args.push('--extractor-args', 'youtube:player_client=ios,android');
+  }
 
   // Si estamos en producción (Linux/Render), usamos el proxy Tor local para evadir bloqueos de IP de datacenter
   if (isLinux) {
@@ -248,8 +255,7 @@ app.get('/stream', (req, res) => {
   }
 
   // Agregar cookies si existen
-  const cookiesPath = path.join(__dirname, 'cookies.txt');
-  if (fs.existsSync(cookiesPath)) {
+  if (hasCookies) {
     args.push('--cookies', cookiesPath);
   }
 
@@ -303,14 +309,21 @@ app.get('/info', (req, res) => {
 
   const ytDlp = getExecutablePath();
   const isLinux = process.platform === 'linux';
+  const cookiesPath = path.join(__dirname, 'cookies.txt');
+  const hasCookies = fs.existsSync(cookiesPath);
 
   // Parámetros optimizados para evadir bloqueos de VPS/DataCenters
   const args = [
     '--dump-json',
-    '--extractor-args', 'youtube:player_client=ios,android',
     '--js-runtimes', 'node',
     '--force-ipv4'
   ];
+
+  // Si NO tenemos cookies, forzamos los clientes móviles para evadir los bloqueos básicos de bot.
+  // Si SÍ tenemos cookies, permitimos los clientes oficiales por defecto (web, tv, etc.) para que se aplique la sesión.
+  if (!hasCookies) {
+    args.push('--extractor-args', 'youtube:player_client=ios,android');
+  }
 
   // Si estamos en producción (Linux/Render), usamos el proxy Tor local para evadir bloqueos de IP de datacenter
   if (isLinux) {
@@ -318,8 +331,7 @@ app.get('/info', (req, res) => {
   }
 
   // Agregar cookies si existen
-  const cookiesPath = path.join(__dirname, 'cookies.txt');
-  if (fs.existsSync(cookiesPath)) {
+  if (hasCookies) {
     args.push('--cookies', cookiesPath);
   }
 
@@ -375,6 +387,83 @@ app.get('/info', (req, res) => {
       console.error('Error parseando JSON de yt-dlp:', parseError);
       res.status(500).json({ error: 'Error al procesar la respuesta del extractor.' });
     }
+  });
+});
+
+// Endpoint POST / para compatibilidad total como drop-in de la API de Cobalt
+app.post('/', async (req, res) => {
+  const videoUrl = req.body.url;
+
+  if (!videoUrl) {
+    return res.status(400).json({
+      status: 'error',
+      error: { code: 'error.api.url_missing', text: 'Falta la URL de descarga' }
+    });
+  }
+
+  console.log(`[Cobalt Compat] Recibida solicitud POST para: ${videoUrl}`);
+
+  const ytDlp = getExecutablePath();
+  const isLinux = process.platform === 'linux';
+  const cookiesPath = path.join(__dirname, 'cookies.txt');
+  const hasCookies = fs.existsSync(cookiesPath);
+  
+  const args = [
+    '-g',
+    '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+    '--js-runtimes', 'node',
+    '--force-ipv4'
+  ];
+
+  // Si NO tenemos cookies, forzamos los clientes móviles para evadir los bloqueos básicos de bot.
+  // Si SÍ tenemos cookies, permitimos los clientes oficiales por defecto (web, tv, etc.) para que se aplique la sesión.
+  if (!hasCookies) {
+    args.push('--extractor-args', 'youtube:player_client=ios,android');
+  }
+
+  if (isLinux) {
+    args.push('--proxy', 'socks5://127.0.0.1:9050');
+  }
+
+  if (hasCookies) {
+    args.push('--cookies', cookiesPath);
+  }
+
+  args.push(videoUrl);
+
+  execFile(ytDlp, args, { timeout: 20000 }, async (error, stdout, stderr) => {
+    if (error) {
+      console.warn(`[Cobalt Compat] yt-dlp falló. Intentando fallback a proxies...`);
+      try {
+        const alternativeData = await getAlternativeStream(videoUrl);
+        return res.json({
+          status: 'tunnel',
+          url: alternativeData.streamUrl
+        });
+      } catch (pipedError) {
+        console.error(`[Cobalt Compat Fallback] Falló también: ${pipedError.message}`);
+        return res.status(500).json({
+          status: 'error',
+          error: {
+            code: 'error.api.extraction_failed',
+            text: `Extracción fallida: ${pipedError.message}`
+          }
+        });
+      }
+    }
+
+    const streamUrl = stdout.trim();
+    if (!streamUrl) {
+      return res.status(500).json({
+        status: 'error',
+        error: { code: 'error.api.empty_stream', text: 'Flujo de stream vacío' }
+      });
+    }
+
+    res.json({
+      status: 'tunnel',
+      url: streamUrl
+    });
   });
 });
 
