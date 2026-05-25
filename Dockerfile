@@ -13,7 +13,9 @@ RUN apt-get update && apt-get install -y \
 # Configurar Tor desde cero de forma limpia para evitar bloqueos de permisos de Debian
 RUN echo "SocksPort 9050" > /etc/tor/torrc && \
     echo "DataDirectory /tmp/tor-data" >> /etc/tor/torrc && \
-    echo "Log notice stdout" >> /etc/tor/torrc
+    echo "Log notice stdout" >> /etc/tor/torrc && \
+    echo "ExitNodes {us},{ca},{mx},{co},{pe}" >> /etc/tor/torrc && \
+    echo "StrictNodes 1" >> /etc/tor/torrc
 
 
 
