@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -8,6 +7,18 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Escribir las cookies de YouTube si están definidas en las variables de entorno
+const cookiesPath = path.join(__dirname, 'cookies.txt');
+if (process.env.YOUTUBE_COOKIES) {
+  try {
+    fs.writeFileSync(cookiesPath, process.env.YOUTUBE_COOKIES, 'utf8');
+    console.log('✅ Cookies de YouTube cargadas exitosamente desde las variables de entorno.');
+  } catch (e) {
+    console.error('❌ Error al guardar las cookies de YouTube:', e);
+  }
+}
+
 
 // Middleware
 app.use(cors());
@@ -31,6 +42,69 @@ function getExecutablePath() {
   
   // 2. Por defecto buscar en el PATH del sistema
   return isWindows ? 'yt-dlp.exe' : 'yt-dlp';
+}
+
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.tokhmi.xyz',
+  'https://api.piped.yt',
+  'https://piped-api.lunar.icu',
+  'https://pipedapi.col1a.me',
+  'https://pipedapi.reallyawesomedomain.xyz'
+];
+
+function extractVideoId(url) {
+  const regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#&?]*).*/;
+  const match = url.match(regExp);
+  return (match && match[7].length === 11) ? match[7] : null;
+}
+
+async function getPipedStream(videoUrl) {
+  const videoId = extractVideoId(videoUrl);
+  if (!videoId) {
+    throw new Error('No se pudo extraer el ID del video de la URL proporcionada.');
+  }
+
+  let lastError = null;
+  
+  // Intentar con múltiples instancias de Piped
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      console.log(`Intentando extraer stream vía Piped API en ${instance}...`);
+      const response = await fetch(`${instance}/streams/${videoId}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(6000)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Instancia respondió con status ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.audioStreams && data.audioStreams.length > 0) {
+        const sortedAudio = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        const bestAudio = sortedAudio.find(s => s.format === 'M4A' || s.codec === 'mp4a') || sortedAudio[0];
+        
+        console.log(`✅ Stream de audio extraído con éxito vía Piped (${instance})`);
+        
+        return {
+          streamUrl: bestAudio.url,
+          title: data.title || 'Audio de YouTube',
+          artist: data.uploader || 'Artista desconocido',
+          duration: data.duration || 0,
+          thumbnail: data.thumbnailUrl || ''
+        };
+      }
+      
+      throw new Error('La respuesta de Piped no contiene flujos de audio válidos.');
+    } catch (e) {
+      console.error(`Error con la instancia de Piped ${instance}:`, e.message);
+      lastError = e;
+    }
+  }
+
+  throw new Error(`Todas las instancias de Piped fallaron. Último error: ${lastError ? lastError.message : 'Desconocido'}`);
 }
 
 // Endpoint de Salud
@@ -58,23 +132,42 @@ app.get('/stream', (req, res) => {
 
   const ytDlp = getExecutablePath();
   
-  // Parámetros para obtener sólo la URL directa (-g) del mejor audio disponible en M4A o mejor calidad
+  // Parámetros optimizados para evadir bloqueos de VPS/DataCenters
   const args = [
     '-g',
     '-f', 'bestaudio[ext=m4a]/bestaudio/best',
-    videoUrl
+    '--extractor-args', 'youtube:player_client=ios,android',
+    '--js-runtimes', 'node',
+    '--force-ipv4'
   ];
+
+  // Agregar cookies si existen
+  const cookiesPath = path.join(__dirname, 'cookies.txt');
+  if (fs.existsSync(cookiesPath)) {
+    args.push('--cookies', cookiesPath);
+  }
+
+  args.push(videoUrl);
 
   console.log(`Ejecutando: ${ytDlp} ${args.join(' ')}`);
 
-  execFile(ytDlp, args, { timeout: 20000 }, (error, stdout, stderr) => {
+  execFile(ytDlp, args, { timeout: 20000 }, async (error, stdout, stderr) => {
     if (error) {
-      console.error(`Error ejecutando yt-dlp: ${error.message}`);
-      console.error(`stderr: ${stderr}`);
-      return res.status(500).json({
-        error: 'No se pudo extraer el flujo de audio de YouTube.',
-        details: stderr.trim() || error.message
-      });
+      console.warn(`⚠️ [yt-dlp] Falló la extracción directa en el servidor. Intentando fallback automático a Piped API...`);
+      try {
+        const pipedData = await getPipedStream(videoUrl);
+        return res.json({
+          status: 'success',
+          url: pipedData.streamUrl,
+          provider: 'piped_fallback'
+        });
+      } catch (pipedError) {
+        console.error(`❌ [Fallback Piped] También falló: ${pipedError.message}`);
+        return res.status(500).json({
+          error: 'No se pudo extraer el flujo de audio de YouTube (fallaron tanto yt-dlp como el proxy de Piped).',
+          details: `Error yt-dlp: ${stderr.trim() || error.message} | Error Piped: ${pipedError.message}`
+        });
+      }
     }
 
     const streamUrl = stdout.trim();
@@ -84,7 +177,8 @@ app.get('/stream', (req, res) => {
 
     res.json({
       status: 'success',
-      url: streamUrl
+      url: streamUrl,
+      provider: 'yt-dlp'
     });
   });
 });
@@ -103,21 +197,46 @@ app.get('/info', (req, res) => {
 
   const ytDlp = getExecutablePath();
   
-  // Parámetros para volcar la metadata como JSON (-J)
+  // Parámetros optimizados para evadir bloqueos de VPS/DataCenters
   const args = [
     '--dump-json',
-    videoUrl
+    '--extractor-args', 'youtube:player_client=ios,android',
+    '--js-runtimes', 'node',
+    '--force-ipv4'
   ];
+
+  // Agregar cookies si existen
+  const cookiesPath = path.join(__dirname, 'cookies.txt');
+  if (fs.existsSync(cookiesPath)) {
+    args.push('--cookies', cookiesPath);
+  }
+
+  args.push(videoUrl);
 
   console.log(`Ejecutando metadatos: ${ytDlp} ${args.join(' ')}`);
 
-  execFile(ytDlp, args, { maxBuffer: 10 * 1024 * 1024, timeout: 20000 }, (error, stdout, stderr) => {
+  execFile(ytDlp, args, { maxBuffer: 10 * 1024 * 1024, timeout: 20000 }, async (error, stdout, stderr) => {
     if (error) {
-      console.error(`Error ejecutando yt-dlp metadata: ${error.message}`);
-      return res.status(500).json({
-        error: 'No se pudo obtener la información del video.',
-        details: stderr.trim() || error.message
-      });
+      console.warn(`⚠️ [yt-dlp] Falló la extracción de metadatos. Intentando fallback automático a Piped API...`);
+      try {
+        const pipedData = await getPipedStream(videoUrl);
+        return res.json({
+          status: 'success',
+          id: extractVideoId(videoUrl) || 'desconocido',
+          title: pipedData.title,
+          artist: pipedData.artist,
+          duration: pipedData.duration,
+          thumbnail: pipedData.thumbnail,
+          streamUrl: pipedData.streamUrl,
+          provider: 'piped_fallback'
+        });
+      } catch (pipedError) {
+        console.error(`❌ [Fallback Piped Info] También falló: ${pipedError.message}`);
+        return res.status(500).json({
+          error: 'No se pudieron obtener los metadatos del video.',
+          details: `Error yt-dlp: ${stderr.trim() || error.message} | Error Piped: ${pipedError.message}`
+        });
+      }
     }
 
     try {
@@ -137,7 +256,8 @@ app.get('/info', (req, res) => {
         artist: metadata.uploader || metadata.channel || 'Artista desconocido',
         duration: metadata.duration, // en segundos
         thumbnail: metadata.thumbnail,
-        streamUrl: streamUrl
+        streamUrl: streamUrl,
+        provider: 'yt-dlp'
       });
     } catch (parseError) {
       console.error('Error parseando JSON de yt-dlp:', parseError);

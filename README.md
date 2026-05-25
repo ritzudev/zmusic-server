@@ -86,5 +86,26 @@ if (response.statusCode == 200) {
 
 ---
 
+## 🛡️ Evadir Bloqueos de YouTube (Error 429 / "Sign in to confirm you're not a bot")
+
+Las plataformas en la nube (como Render o AWS) utilizan direcciones IP de centros de datos, las cuales YouTube bloquea agresivamente bajo sospecha de bots. Para solucionar esto de raíz, el servidor incorpora dos estrategias avanzadas:
+
+1.  **Emulación de Clientes Oficiales (Automática):** El servidor fuerza a `yt-dlp` a consultar utilizando los reproductores oficiales de **iOS y Android**, los cuales tienen restricciones infinitamente menores que el navegador web de escritorio. También fuerza la resolución a través de **IPv4** (ya que los datacenters suelen estar bloqueados en sus bloques IPv6).
+2.  **Soporte de Cookies de YouTube (Recomendado):** Al pasarle cookies de sesión válidas a `yt-dlp`, YouTube asume que eres un usuario humano autenticado y **elimina cualquier bot-check o error 429 de inmediato**.
+
+### Cómo configurar las Cookies en Render:
+
+1.  Instala una extensión de navegador en tu computadora para exportar cookies en formato **Netscape** (por ejemplo: [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/ccmddjjdclbcecbggfbhhbgedhcmhgbp) para Chrome o Firefox).
+2.  Ve a [YouTube.com](https://www.youtube.com) e inicia sesión (puedes usar una cuenta secundaria o "burner" por mayor privacidad, aunque no es estrictamente necesario).
+3.  Abre la extensión y haz clic en exportar/copiar las cookies en formato **Netscape** (el archivo de texto completo).
+4.  Ve al panel de control de tu servicio en **Render.com**.
+5.  Navega a **Environment** (Variables de entorno) y haz clic en **Add Environment Variable**.
+6.  Crea una variable llamada: `YOUTUBE_COOKIES`.
+7.  En el campo de valor, **pega todo el contenido de texto copiado** de tus cookies y guarda los cambios.
+8.  Render reiniciará automáticamente tu servidor. Al iniciar, el servidor detectará la variable, creará un archivo de cookies seguro y lo usará en todas las descargas para saltarse el captcha y el bloqueo de YouTube.
+
+---
+
 ## 🛡️ Seguridad e Inyección
 El servidor utiliza de manera interna `execFile` con argumentos parametrizados en lugar de `exec` en consola cruda. Esto evita cualquier tipo de ataque por inyección de comandos en las URLs enviadas por los usuarios.
+
