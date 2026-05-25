@@ -53,58 +53,105 @@ const PIPED_INSTANCES = [
   'https://pipedapi.reallyawesomedomain.xyz'
 ];
 
+const INVIDIOUS_INSTANCES = [
+  'https://yewtu.be',
+  'https://invidious.projectsegfau.lt',
+  'https://invidious.privacydev.net',
+  'https://inv.tux.im',
+  'https://invidious.no-logs.com'
+];
+
 function extractVideoId(url) {
   const regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#&?]*).*/;
   const match = url.match(regExp);
   return (match && match[7].length === 11) ? match[7] : null;
 }
 
-async function getPipedStream(videoUrl) {
+async function getAlternativeStream(videoUrl) {
   const videoId = extractVideoId(videoUrl);
   if (!videoId) {
     throw new Error('No se pudo extraer el ID del video de la URL proporcionada.');
   }
 
   let lastError = null;
-  
-  // Intentar con múltiples instancias de Piped
+
+  // --- INTENTO 1: RED DE PIPED ---
   for (const instance of PIPED_INSTANCES) {
     try {
-      console.log(`Intentando extraer stream vía Piped API en ${instance}...`);
+      console.log(`Intentando Piped API en ${instance}...`);
       const response = await fetch(`${instance}/streams/${videoId}`, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(10000) // Timeout aumentado a 10s para conexiones lentas
       });
 
-      if (!response.ok) {
-        throw new Error(`Instancia respondió con status ${response.status}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.audioStreams && data.audioStreams.length > 0) {
+          const sortedAudio = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+          const bestAudio = sortedAudio.find(s => s.format === 'M4A' || s.codec === 'mp4a') || sortedAudio[0];
+          console.log(`✅ Stream de audio extraído con éxito vía Piped (${instance})`);
+          return {
+            streamUrl: bestAudio.url,
+            title: data.title || 'Audio de YouTube',
+            artist: data.uploader || 'Artista desconocido',
+            duration: data.duration || 0,
+            thumbnail: data.thumbnailUrl || '',
+            provider: 'piped_fallback'
+          };
+        }
       }
-
-      const data = await response.json();
-      
-      if (data.audioStreams && data.audioStreams.length > 0) {
-        const sortedAudio = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        const bestAudio = sortedAudio.find(s => s.format === 'M4A' || s.codec === 'mp4a') || sortedAudio[0];
-        
-        console.log(`✅ Stream de audio extraído con éxito vía Piped (${instance})`);
-        
-        return {
-          streamUrl: bestAudio.url,
-          title: data.title || 'Audio de YouTube',
-          artist: data.uploader || 'Artista desconocido',
-          duration: data.duration || 0,
-          thumbnail: data.thumbnailUrl || ''
-        };
-      }
-      
-      throw new Error('La respuesta de Piped no contiene flujos de audio válidos.');
     } catch (e) {
-      console.error(`Error con la instancia de Piped ${instance}:`, e.message);
+      console.warn(`Piped ${instance} falló: ${e.message}`);
       lastError = e;
     }
   }
 
-  throw new Error(`Todas las instancias de Piped fallaron. Último error: ${lastError ? lastError.message : 'Desconocido'}`);
+  // --- INTENTO 2: RED DE INVIDIOUS (SEGUNDA CAPA) ---
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      console.log(`Intentando Invidious API en ${instance}...`);
+      const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const adaptiveFormats = data.adaptiveFormats || [];
+        const audioFormats = adaptiveFormats.filter(f => f.type && f.type.startsWith('audio/'));
+        
+        if (audioFormats.length > 0) {
+          const sortedAudio = audioFormats.sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
+          const bestAudio = sortedAudio.find(f => f.type.includes('mp4') || f.container === 'm4a') || sortedAudio[0];
+          
+          console.log(`✅ Stream de audio extraído con éxito vía Invidious (${instance})`);
+          
+          let thumbnail = '';
+          if (data.videoThumbnails && data.videoThumbnails.length > 0) {
+            const highThumb = data.videoThumbnails.find(t => t.quality === 'high' || t.quality === 'medium');
+            thumbnail = highThumb ? highThumb.url : data.videoThumbnails[0].url;
+            if (thumbnail.startsWith('/')) {
+              thumbnail = `${instance}${thumbnail}`;
+            }
+          }
+
+          return {
+            streamUrl: bestAudio.url,
+            title: data.title || 'Audio de YouTube',
+            artist: data.author || 'Artista desconocido',
+            duration: data.lengthSeconds || 0,
+            thumbnail: thumbnail,
+            provider: 'invidious_fallback'
+          };
+        }
+      }
+    } catch (e) {
+      console.warn(`Invidious ${instance} falló: ${e.message}`);
+      lastError = e;
+    }
+  }
+
+  throw new Error(`Todos los proxies fallaron. Último error: ${lastError ? lastError.message : 'Desconocido'}`);
 }
 
 // Endpoint de Salud
@@ -153,19 +200,19 @@ app.get('/stream', (req, res) => {
 
   execFile(ytDlp, args, { timeout: 20000 }, async (error, stdout, stderr) => {
     if (error) {
-      console.warn(`⚠️ [yt-dlp] Falló la extracción directa en el servidor. Intentando fallback automático a Piped API...`);
+      console.warn(`⚠️ [yt-dlp] Falló la extracción directa en el servidor. Intentando fallback automático a proxies alternativos...`);
       try {
-        const pipedData = await getPipedStream(videoUrl);
+        const alternativeData = await getAlternativeStream(videoUrl);
         return res.json({
           status: 'success',
-          url: pipedData.streamUrl,
-          provider: 'piped_fallback'
+          url: alternativeData.streamUrl,
+          provider: alternativeData.provider
         });
       } catch (pipedError) {
-        console.error(`❌ [Fallback Piped] También falló: ${pipedError.message}`);
+        console.error(`❌ [Fallback Proxies] También falló: ${pipedError.message}`);
         return res.status(500).json({
-          error: 'No se pudo extraer el flujo de audio de YouTube (fallaron tanto yt-dlp como el proxy de Piped).',
-          details: `Error yt-dlp: ${stderr.trim() || error.message} | Error Piped: ${pipedError.message}`
+          error: 'No se pudo extraer el flujo de audio de YouTube (fallaron tanto yt-dlp como los proxies de Piped/Invidious).',
+          details: `Error yt-dlp: ${stderr.trim() || error.message} | Error Proxies: ${pipedError.message}`
         });
       }
     }
@@ -217,24 +264,24 @@ app.get('/info', (req, res) => {
 
   execFile(ytDlp, args, { maxBuffer: 10 * 1024 * 1024, timeout: 20000 }, async (error, stdout, stderr) => {
     if (error) {
-      console.warn(`⚠️ [yt-dlp] Falló la extracción de metadatos. Intentando fallback automático a Piped API...`);
+      console.warn(`⚠️ [yt-dlp] Falló la extracción de metadatos. Intentando fallback automático a proxies alternativos...`);
       try {
-        const pipedData = await getPipedStream(videoUrl);
+        const alternativeData = await getAlternativeStream(videoUrl);
         return res.json({
           status: 'success',
           id: extractVideoId(videoUrl) || 'desconocido',
-          title: pipedData.title,
-          artist: pipedData.artist,
-          duration: pipedData.duration,
-          thumbnail: pipedData.thumbnail,
-          streamUrl: pipedData.streamUrl,
-          provider: 'piped_fallback'
+          title: alternativeData.title,
+          artist: alternativeData.artist,
+          duration: alternativeData.duration,
+          thumbnail: alternativeData.thumbnail,
+          streamUrl: alternativeData.streamUrl,
+          provider: alternativeData.provider
         });
       } catch (pipedError) {
-        console.error(`❌ [Fallback Piped Info] También falló: ${pipedError.message}`);
+        console.error(`❌ [Fallback Proxies Info] También falló: ${pipedError.message}`);
         return res.status(500).json({
           error: 'No se pudieron obtener los metadatos del video.',
-          details: `Error yt-dlp: ${stderr.trim() || error.message} | Error Piped: ${pipedError.message}`
+          details: `Error yt-dlp: ${stderr.trim() || error.message} | Error Proxies: ${pipedError.message}`
         });
       }
     }
