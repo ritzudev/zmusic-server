@@ -5,6 +5,12 @@ const net = require('net');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const dns = require('dns');
+
+// Preferir IPv4 para evitar errores "fetch failed" en entornos sin IPv6
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -132,7 +138,7 @@ async function getAlternativeStream(videoUrl) {
           downloadMode: 'audio',
           audioFormat: 'best'
         }),
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(12000)
       });
 
       if (response.ok) {
@@ -164,7 +170,7 @@ async function getAlternativeStream(videoUrl) {
       console.log(`Intentando Piped API en ${instance}...`);
       const response = await fetch(`${instance}/streams/${videoId}`, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(12000)
       });
 
       if (response.ok) {
@@ -195,7 +201,7 @@ async function getAlternativeStream(videoUrl) {
       console.log(`Intentando Invidious API en ${instance}...`);
       const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(12000)
       });
 
       if (response.ok) {
@@ -288,7 +294,10 @@ app.get('/stream', (req, res) => {
     '-g',
     '-f', 'bestaudio[ext=m4a]/bestaudio/best',
     '--js-runtimes', 'node',
-    '--force-ipv4'
+    '--force-ipv4',
+    '--socket-timeout', '30',
+    '--retries', '3',
+    '--no-playlist'
   ];
 
   // Si NO tenemos cookies, forzamos los clientes móviles para evadir los bloqueos básicos de bot.
@@ -311,7 +320,7 @@ app.get('/stream', (req, res) => {
 
   console.log(`Ejecutando: ${ytDlp} ${args.join(' ')}`);
 
-  execFile(ytDlp, args, { timeout: 20000 }, async (error, stdout, stderr) => {
+  execFile(ytDlp, args, { timeout: 60000 }, async (error, stdout, stderr) => {
     if (error) {
       console.error(`❌ [yt-dlp Failure Details - /stream]`);
       console.error(`Exit Code: ${error.code}`);
@@ -369,7 +378,10 @@ app.get('/info', (req, res) => {
   const args = [
     '--dump-json',
     '--js-runtimes', 'node',
-    '--force-ipv4'
+    '--force-ipv4',
+    '--socket-timeout', '30',
+    '--retries', '3',
+    '--no-playlist'
   ];
 
   // Si NO tenemos cookies, forzamos los clientes móviles para evadir los bloqueos básicos de bot.
@@ -392,7 +404,7 @@ app.get('/info', (req, res) => {
 
   console.log(`Ejecutando metadatos: ${ytDlp} ${args.join(' ')}`);
 
-  execFile(ytDlp, args, { maxBuffer: 10 * 1024 * 1024, timeout: 20000 }, async (error, stdout, stderr) => {
+  execFile(ytDlp, args, { maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, async (error, stdout, stderr) => {
     if (error) {
       console.error(`❌ [yt-dlp Failure Details - /info]`);
       console.error(`Exit Code: ${error.code}`);
@@ -470,7 +482,10 @@ app.post('/', async (req, res) => {
     '-g',
     '-f', 'bestaudio[ext=m4a]/bestaudio/best',
     '--js-runtimes', 'node',
-    '--force-ipv4'
+    '--force-ipv4',
+    '--socket-timeout', '30',
+    '--retries', '3',
+    '--no-playlist'
   ];
 
   // Si NO tenemos cookies, forzamos los clientes móviles para evadir los bloqueos básicos de bot.
@@ -490,7 +505,7 @@ app.post('/', async (req, res) => {
 
   args.push(videoUrl);
 
-  execFile(ytDlp, args, { timeout: 20000 }, async (error, stdout, stderr) => {
+  execFile(ytDlp, args, { timeout: 60000 }, async (error, stdout, stderr) => {
     if (error) {
       console.error(`❌ [yt-dlp Failure Details - POST /]`);
       console.error(`Exit Code: ${error.code}`);
