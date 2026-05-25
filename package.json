@@ -1,0 +1,25 @@
+{
+  "name": "zmusic-server",
+  "version": "1.0.0",
+  "description": "API privada y ligera para extraer flujos de audio de YouTube utilizando yt-dlp",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": [
+    "youtube",
+    "yt-dlp",
+    "downloader",
+    "zmusic",
+    "api"
+  ],
+  "author": "Ritzu",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "morgan": "^1.10.0"
+  }
+}
