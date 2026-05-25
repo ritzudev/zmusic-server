@@ -1,17 +1,22 @@
 # Usar una imagen oficial de Node.js ligera
 FROM node:20-slim
 
-# Instalar dependencias del sistema requeridas para yt-dlp y ffmpeg
+# Instalar dependencias del sistema requeridas para yt-dlp, ffmpeg y tor
 RUN apt-get update && apt-get install -y \
     python3 \
     ffmpeg \
     curl \
     ca-certificates \
+    tor \
     && rm -rf /var/lib/apt/lists/*
+
+# Configurar Tor para que escuche en el puerto 9050
+RUN echo "SocksPort 9050" >> /etc/tor/torrc
 
 # Descargar e instalar la versión más reciente de yt-dlp directamente de GitHub
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
+
 
 # Crear y establecer el directorio de trabajo de la app
 WORKDIR /app
@@ -32,5 +37,6 @@ ENV NODE_ENV=production
 # Exponer el puerto del servidor
 EXPOSE 3000
 
-# Comando para iniciar la aplicación
-CMD ["npm", "start"]
+# Iniciar Tor en segundo plano como daemon y luego arrancar la aplicación Node.js
+CMD tor --runasdaemon 1 && npm start
+

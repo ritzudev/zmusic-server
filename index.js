@@ -231,6 +231,7 @@ app.get('/stream', (req, res) => {
   }
 
   const ytDlp = getExecutablePath();
+  const isLinux = process.platform === 'linux';
   
   // Parámetros optimizados para evadir bloqueos de VPS/DataCenters
   const args = [
@@ -240,6 +241,11 @@ app.get('/stream', (req, res) => {
     '--js-runtimes', 'node',
     '--force-ipv4'
   ];
+
+  // Si estamos en producción (Linux/Render), usamos el proxy Tor local para evadir bloqueos de IP de datacenter
+  if (isLinux) {
+    args.push('--proxy', 'socks5://127.0.0.1:9050');
+  }
 
   // Agregar cookies si existen
   const cookiesPath = path.join(__dirname, 'cookies.txt');
@@ -296,7 +302,8 @@ app.get('/info', (req, res) => {
   }
 
   const ytDlp = getExecutablePath();
-  
+  const isLinux = process.platform === 'linux';
+
   // Parámetros optimizados para evadir bloqueos de VPS/DataCenters
   const args = [
     '--dump-json',
@@ -304,6 +311,11 @@ app.get('/info', (req, res) => {
     '--js-runtimes', 'node',
     '--force-ipv4'
   ];
+
+  // Si estamos en producción (Linux/Render), usamos el proxy Tor local para evadir bloqueos de IP de datacenter
+  if (isLinux) {
+    args.push('--proxy', 'socks5://127.0.0.1:9050');
+  }
 
   // Agregar cookies si existen
   const cookiesPath = path.join(__dirname, 'cookies.txt');
