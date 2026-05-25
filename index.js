@@ -484,7 +484,8 @@ app.get('/download', (req, res) => {
     '--no-playlist',
     '--force-ipv4',
     '--socket-timeout', '30',
-    '--retries', '3'
+    '--retries', '3',
+    '--js-runtimes', 'node'
   ];
 
   if (!hasCookies) {
