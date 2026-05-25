@@ -10,10 +10,9 @@ RUN apt-get update && apt-get install -y \
     tor \
     && rm -rf /var/lib/apt/lists/*
 
-# Configurar Tor para que escuche en el puerto 9050 y use exit nodes en las Américas
-RUN echo "SocksPort 9050" >> /etc/tor/torrc && \
-    echo "ExitNodes {PE},{CO},{CL},{MX},{BR},{US},{CA}" >> /etc/tor/torrc && \
-    echo "StrictNodes 1" >> /etc/tor/torrc
+# Configurar Tor para que escuche en el puerto 9050
+RUN echo "SocksPort 9050" >> /etc/tor/torrc
+
 
 
 # Descargar e instalar la versión más reciente de yt-dlp directamente de GitHub
