@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const net = require('net');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const dns = require('dns');
@@ -349,9 +349,10 @@ app.get('/stream', (req, res) => {
       return res.status(500).json({ error: 'yt-dlp no devolvió ninguna URL de flujo.' });
     }
 
+    const downloadUrl = `${req.protocol}://${req.get('host')}/download?url=${encodeURIComponent(videoUrl)}`;
     res.json({
       status: 'success',
-      url: streamUrl,
+      url: downloadUrl,
       provider: 'yt-dlp'
     });
   });
@@ -441,7 +442,7 @@ app.get('/info', (req, res) => {
       let bestAudioFormat = audioFormats.find(f => f.ext === 'm4a') || audioFormats[0] || metadata;
 
       // Si no hay formato exclusivo de audio, tomar la mejor opción
-      const streamUrl = bestAudioFormat.url;
+      const downloadUrl = `${req.protocol}://${req.get('host')}/download?url=${encodeURIComponent(videoUrl)}`;
 
       res.json({
         status: 'success',
@@ -450,13 +451,80 @@ app.get('/info', (req, res) => {
         artist: metadata.uploader || metadata.channel || 'Artista desconocido',
         duration: metadata.duration, // en segundos
         thumbnail: metadata.thumbnail,
-        streamUrl: streamUrl,
+        streamUrl: downloadUrl,
         provider: 'yt-dlp'
       });
     } catch (parseError) {
       console.error('Error parseando JSON de yt-dlp:', parseError);
       res.status(500).json({ error: 'Error al procesar la respuesta del extractor.' });
     }
+  });
+});
+
+// Endpoint de descarga directa (Proxy de transmisión / Tunneling real)
+app.get('/download', (req, res) => {
+  const videoUrl = req.query.url;
+  
+  if (!videoUrl) {
+    return res.status(400).send('Falta el parámetro obligatorio "url"');
+  }
+
+  if (!videoUrl.startsWith('http://') && !videoUrl.startsWith('https://')) {
+    return res.status(400).send('La URL proporcionada no es válida');
+  }
+
+  const ytDlp = getExecutablePath();
+  const isLinux = process.platform === 'linux';
+  const cookiesPath = path.join(__dirname, 'cookies.txt');
+  const hasCookies = fs.existsSync(cookiesPath);
+
+  const args = [
+    '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+    '-o', '-',
+    '--no-playlist',
+    '--force-ipv4',
+    '--socket-timeout', '30',
+    '--retries', '3'
+  ];
+
+  if (!hasCookies) {
+    args.push('--extractor-args', 'youtube:player_client=ios,android');
+  }
+
+  if (isLinux) {
+    args.push('--proxy', 'socks5://127.0.0.1:9050');
+  }
+
+  if (hasCookies) {
+    args.push('--cookies', cookiesPath);
+  }
+
+  args.push(videoUrl);
+
+  console.log(`[Tunnel Stream] Iniciando streaming para: ${videoUrl}`);
+
+  res.setHeader('Content-Type', 'audio/mp4');
+  res.setHeader('Transfer-Encoding', 'chunked');
+
+  const ytProcess = spawn(ytDlp, args);
+
+  ytProcess.stdout.pipe(res);
+
+  let errorLog = '';
+  ytProcess.stderr.on('data', (data) => {
+    errorLog += data.toString();
+  });
+
+  ytProcess.on('close', (code) => {
+    console.log(`[Tunnel Stream] Terminado con código de salida: ${code}`);
+    if (code !== 0) {
+      console.error(`[Tunnel Stream Error]: ${errorLog}`);
+    }
+  });
+
+  req.on('close', () => {
+    console.log(`[Tunnel Stream] Cliente se desconectó. Terminando proceso.`);
+    ytProcess.kill('SIGTERM');
   });
 });
 
@@ -539,9 +607,10 @@ app.post('/', async (req, res) => {
       });
     }
 
+    const downloadUrl = `${req.protocol}://${req.get('host')}/download?url=${encodeURIComponent(videoUrl)}`;
     res.json({
       status: 'tunnel',
-      url: streamUrl
+      url: downloadUrl
     });
   });
 });
