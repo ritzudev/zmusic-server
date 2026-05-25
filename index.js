@@ -249,9 +249,8 @@ app.get('/stream', (req, res) => {
     args.push('--extractor-args', 'youtube:player_client=ios,android');
   }
 
-  // Si estamos en producción (Linux/Render) y NO tenemos cookies, usamos el proxy Tor local.
-  // Si SÍ tenemos cookies, NO usamos Tor para evitar que Google invalide la sesión por cambios geográficos abruptos.
-  if (isLinux && !hasCookies) {
+  // Si estamos en producción (Linux/Render), usamos el proxy Tor local (el cual está limitado a nodos de salida en las Américas en torrc para proteger las cookies de bloqueos geográficos).
+  if (isLinux) {
     args.push('--proxy', 'socks5://127.0.0.1:9050');
   }
 
@@ -326,9 +325,8 @@ app.get('/info', (req, res) => {
     args.push('--extractor-args', 'youtube:player_client=ios,android');
   }
 
-  // Si estamos en producción (Linux/Render) y NO tenemos cookies, usamos el proxy Tor local.
-  // Si SÍ tenemos cookies, NO usamos Tor para evitar que Google invalide la sesión por cambios geográficos abruptos.
-  if (isLinux && !hasCookies) {
+  // Si estamos en producción (Linux/Render), usamos el proxy Tor local (el cual está limitado a nodos de salida en las Américas en torrc para proteger las cookies de bloqueos geográficos).
+  if (isLinux) {
     args.push('--proxy', 'socks5://127.0.0.1:9050');
   }
 
@@ -423,7 +421,8 @@ app.post('/', async (req, res) => {
     args.push('--extractor-args', 'youtube:player_client=ios,android');
   }
 
-  if (isLinux && !hasCookies) {
+  // Si estamos en producción (Linux/Render), usamos el proxy Tor local (limitado regionalmente en las Américas).
+  if (isLinux) {
     args.push('--proxy', 'socks5://127.0.0.1:9050');
   }
 
