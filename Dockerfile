@@ -10,9 +10,11 @@ RUN apt-get update && apt-get install -y \
     tor \
     && rm -rf /var/lib/apt/lists/*
 
-# Configurar Tor para que escuche en el puerto 9050 y use un directorio temporal de datos para evitar errores de permisos
-RUN echo "SocksPort 9050" >> /etc/tor/torrc && \
-    echo "DataDirectory /tmp/tor-data" >> /etc/tor/torrc
+# Configurar Tor desde cero de forma limpia para evitar bloqueos de permisos de Debian
+RUN echo "SocksPort 9050" > /etc/tor/torrc && \
+    echo "DataDirectory /tmp/tor-data" >> /etc/tor/torrc && \
+    echo "Log notice stdout" >> /etc/tor/torrc
+
 
 
 
